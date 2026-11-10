@@ -1,0 +1,1177 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Canvas</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/2.3.4/p5.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Redaction+35:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #043a3a;
+  color: #fff;
+  font-family: "Redaction 35", serif;
+}
+
+#app-stage {
+  width: 1280px;
+  height: 720px;
+  position: fixed;
+  transform-origin: top left;
+  overflow: hidden;
+  background: #000;
+}
+
+canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  z-index: 0;
+}
+
+button, input {
+  position: absolute;
+  z-index: 10;
+}
+
+button {
+  font: 9px "Press Start 2P", system-ui;
+  padding: 4px 8px;
+  color: #fff;
+  background: #000;
+  border: 3px solid #ffffff;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #333;
+}
+
+input {
+  font: 14px "Redaction 35", serif;
+}
+
+.rgb-input {
+  width: 45px;
+  height: 28px;
+}
+
+.stroke-input {
+  width: 60px;
+  height: 28px;
+}
+</style>
+</head>
+<body>
+<script>
+let shapes = [];
+
+let save1 = [];
+let save2 = [];
+let save3 = [];
+let save4 = [];
+let save5 = [];
+
+let redoStack = [];
+let color = [255, 0, 0];
+let strokeColor = [0, 0, 255];
+let strokeSize = 3;
+let mode = 1;
+let drawing = false;
+let triangleStep = 0;
+let startX, startY = 0;
+let secondX, secondY = 0;
+let viewScale = 1;
+let viewX, viewY = 0;
+let canvasReady = false;
+let canvasW, canvasH = 0;
+let youSure = false;
+
+let colorPicker;
+let strokeColorPicker;
+let rgbInputs;
+let strokeInput;
+let canvasChoices = [];
+let customWInput;
+let customHInput;
+let customCreateButton;
+let backButton;
+let changeCanvasButton;
+let exportButton;
+let saveButton;
+let importButton;
+let comfirmChange;
+let noComfirmChange;
+
+let worldX = 0;
+let worldY = 0;
+
+let appStage;
+let programScale = 1;
+let redactionLoaded = false;
+
+let artTitle;
+
+function updateProgramScale() {
+  programScale = Math.min(
+    windowWidth / 1280,
+    windowHeight / 720
+  );
+
+  const x = (windowWidth - 1280 * programScale) / 2;
+  const y = (windowHeight - 720 * programScale) / 2;
+
+  appStage.style('left', x + 'px');
+  appStage.style('top', y + 'px');
+  appStage.style('transform', 'scale(' + programScale + ')');
+}
+
+function stageElement(element) {
+  element.parent(appStage);
+  return element;
+}
+
+function getProgramMouse() {
+  return {
+    x: mouseX / programScale,
+    y: mouseY / programScale
+  };
+}
+
+function setup() {
+  appStage = createDiv();
+  appStage.id('app-stage');
+
+  const renderer = createCanvas(1280, 720);
+  renderer.parent(appStage);
+
+  document.fonts.load('16px "Redaction 35"').then(() => {
+    redactionLoaded = true;
+    textFont('Redaction 35');
+  }).catch(error => {
+    console.error('Redaction font failed to load:', error);
+  });
+
+  createColorControls();
+  createCanvasSelection();
+  positionSelect();
+
+  makeToolButton('Rect', 10, 430, () => setMode(1));
+  makeToolButton('Ellipse', 105, 430, () => setMode(2));
+  makeToolButton('Triangle', 10, 465, () => setMode(3));
+  makeToolButton('Line', 120, 465, () => setMode(4));
+
+
+
+  updateProgramScale();
+}
+
+function createColorControls() {
+  colorPicker = stageElement(createColorPicker('#ff0000'));
+  colorPicker.position(10, 150);
+  colorPicker.input(syncRGB);
+
+  strokeColorPicker = stageElement(createColorPicker('#0000ff'));
+  strokeColorPicker.position(10, 380);
+  strokeColorPicker.input(syncStrokeColorFromPicker);
+
+  rgbInputs = [
+    stageElement(createInput('255', 'number')),
+    stageElement(createInput('0', 'number')),
+    stageElement(createInput('0', 'number'))
+  ];
+
+  rgbInputs.forEach((input, index) => {
+    input.attribute('min', '0');
+    input.attribute('max', '255');
+    input.attribute('step', '1');
+    input.addClass('rgb-input');
+    input.position(10 + index * 55, 115);
+  });
+
+  strokeInput = stageElement(createInput('3', 'number'));
+  strokeInput.attribute('min', '0');
+  strokeInput.attribute('max', '10');
+  strokeInput.attribute('step', '1');
+  strokeInput.addClass('stroke-input');
+  strokeInput.position(115, 313);
+  strokeInput.input(applyStroke);
+
+  let rgbButton = stageElement(createButton('Apply RGB'));
+  rgbButton.position(75, 150);
+  rgbButton.mousePressed(applyRGB);
+
+  exportButton = stageElement(createButton('Export Code'));
+  exportButton.position(10, height - 40);
+  exportButton.mousePressed(exportCode);
+
+  let undoButton = stageElement(createButton('Undo'));
+  undoButton.position(10, 195);
+  undoButton.mousePressed(undo);
+
+  let redoButton = stageElement(createButton('Redo'));
+  redoButton.position(75, 195);
+  redoButton.mousePressed(redo);
+
+  saveButton = stageElement(createButton('Save'));
+  saveButton.position(width - 90, 20);
+  saveButton.mousePressed(saveArt);
+
+  importButton = stageElement(createButton('Import'));
+  importButton.position(width - 90, 50);
+  importButton.mousePressed(importArt);
+}
+
+function createCanvasSelection() {
+
+  const options = [
+    { label: 'Logo (1000 × 1000)', width: 1000, height: 1000 },
+    { label: 'Portrait (1080 × 1350)', width: 1080, height: 1350 },
+    { label: 'Landscape (1920 × 1080)', width: 1920, height: 1080 }
+  ];
+
+  options.forEach(option => {
+    let button = stageElement(createButton(option.label));
+    button.size(170, 170);
+    button.mousePressed(() => chooseCanvas(option.width, option.height));
+    canvasChoices.push(button);
+  });
+
+  let customButton = stageElement(createButton('Custom'));
+  customButton.size(170, 170);
+  customButton.mousePressed(showCustomInputs);
+  canvasChoices.push(customButton);
+
+  customWInput = stageElement(createInput('1000', 'number'));
+  customHInput = stageElement(createInput('1000', 'number'));
+
+  [customWInput, customHInput].forEach(input => {
+    input.attribute('min', '1');
+    input.attribute('max', '2000');
+    input.size(90, 28);
+    input.input(() => limitCustom(input));
+    input.hide();
+  });
+
+  customCreateButton = stageElement(createButton('Create canvas'));
+  customCreateButton.mousePressed(createCustomCanvas);
+  customCreateButton.hide();
+
+  backButton = stageElement(createButton('Back'));
+  backButton.mousePressed(backToCanvasChoices);
+  backButton.hide();
+
+  changeCanvasButton = stageElement(createButton('New Canvas'));
+  changeCanvasButton.mousePressed(areYouSure);
+  changeCanvasButton.hide();
+
+  comfirmChange = stageElement(createButton('Yeah'));
+  comfirmChange.mousePressed(showCanvasSelection);
+  comfirmChange.hide();
+
+  noComfirmChange = stageElement(createButton('Nvm'));
+  noComfirmChange.mousePressed(noSure);
+  noComfirmChange.hide();
+}
+
+function positionSelect() {
+  const areaX = 200;
+  const areaW = max(0, width - areaX);
+  const buttonSize = 170;
+  const gap = 24;
+  const groupW = buttonSize * 2 + gap;
+  const groupH = buttonSize * 2 + gap;
+  const startX = areaX + (areaW - groupW) / 2;
+  const startY = (height - groupH) / 2;
+
+  canvasChoices.forEach((button, index) => {
+    button.position(
+      startX + (index % 2) * (buttonSize + gap),
+      startY + floor(index / 2) * (buttonSize + gap)
+    );
+  });
+
+  customWInput.position(areaX + areaW / 2 - 100, startY + groupH + 35);
+  customHInput.position(areaX + areaW / 2 + 10, startY + groupH + 35);
+  customCreateButton.position(areaX + areaW / 2 - 65, startY + groupH + 75);
+  backButton.position(areaX + areaW / 2 - 25, startY + groupH + 115);
+  changeCanvasButton.position(10, height - 80);
+  exportButton.position(10, height - 40);
+}
+
+function chooseCanvas(width, height) {
+  if (canvasW > 0 && canvasH > 0) {
+    scaleShapes(canvasW, canvasH, width, height);
+  }
+
+  canvasW = width;
+  canvasH = height;
+  canvasReady = true;
+  drawing = false;
+  triangleStep = 0;
+
+  fitCanvas();
+
+  canvasChoices.forEach(button => button.hide());
+  hideCustomInputs();
+  changeCanvasButton.show();
+}
+
+function areYouSure() {
+  youSure = true;
+  changeCanvasButton.hide();
+  comfirmChange.show();
+  noComfirmChange.show();
+  comfirmChange.position(10, height - 80);
+  noComfirmChange.position(100, height - 80);
+}
+
+function noSure() {
+  youSure = false;
+  changeCanvasButton.show();
+  comfirmChange.hide();
+  noComfirmChange.hide();
+}
+
+function importArt() {
+  const slots = [save1, save2, save3, save4, save5];
+
+  const userInput = prompt(
+    "Enter a save slot number (1-5) to import your artwork."
+  );
+
+  if (userInput === null) return;
+
+  const slotNumber = userInput.trim();
+
+  if (!/^[1-5]$/.test(slotNumber)) {
+    alert("Invalid input! Please enter a number from 1 to 5.");
+    return;
+  }
+
+  const slotIndex = Number(slotNumber) - 1;
+  const savedShapes = slots[slotIndex];
+
+  if (savedShapes.length === 0) {
+    alert(`Save slot ${slotNumber} is empty!`);
+    return;
+  }
+
+  if (
+    !Number.isFinite(savedShapes.canvasW) ||
+    !Number.isFinite(savedShapes.canvasH) ||
+    savedShapes.canvasW <= 0 ||
+    savedShapes.canvasH <= 0
+  ) {
+    alert("The saved artwork has invalid canvas dimensions.");
+    return;
+  }
+
+  if (shapes.length > 0) {
+    const confirmImport = confirm(
+      "Importing this artwork will replace your current artwork. Continue?"
+    );
+
+    if (!confirmImport) return;
+  }
+
+  shapes = savedShapes.map(shape => ({
+    ...shape,
+    color: [...shape.color],
+    strokeColor: [...(shape.strokeColor || [0, 0, 255])]
+  }));
+
+  canvasW = savedShapes.canvasW;
+  canvasH = savedShapes.canvasH;
+
+  canvasReady = true;
+  drawing = false;
+  triangleStep = 0;
+  redoStack = [];
+  youSure = false;
+
+  canvasChoices.forEach(button => button.hide());
+  hideCustomInputs();
+
+  comfirmChange.hide();
+  noComfirmChange.hide();
+  changeCanvasButton.show();
+  fitCanvas();
+
+  alert(`Artwork successfully imported from slot ${slotNumber}!`);
+}
+
+function saveArt() {
+  if (shapes.length === 0) {
+    alert("There is nothing to save!");
+    return;
+  }
+
+  const slots = [save1, save2, save3, save4, save5];
+
+  const message = slots.map((slot, index) =>
+    `Save slot ${index + 1} is ${slot.length === 0 ? "available" : "occupied"}`
+  ).join("\n");
+
+  const userInput = prompt(
+    `${message}\n\n` +
+    "Enter a slot number (1-5) to save your artwork.\n" +
+    "Saving to an occupied slot will overwrite it."
+  );
+
+  if (userInput === null) return;
+
+  const slotNumber = userInput.trim();
+
+  if (!/^[1-5]$/.test(slotNumber)) {
+    alert("Invalid input! Please enter a number from 1 to 5.");
+    return;
+  }
+
+  const slotIndex = Number(slotNumber) - 1;
+  const targetSlot = slots[slotIndex];
+
+  if (targetSlot.length > 0) {
+    const overwrite = confirm(
+      `Save slot ${slotNumber} already contains artwork.\n\n` +
+      "Do you want to overwrite it?"
+    );
+
+    if (!overwrite) {
+      alert("Save cancelled. Your existing artwork was kept.");
+      return;
+    }
+  }
+
+  const savedShapes = shapes.map(shape => ({
+    ...shape,
+    color: [...shape.color],
+    strokeColor: [...shape.strokeColor]
+  }));
+
+  targetSlot.length = 0;
+
+  savedShapes.forEach(shape => {
+    targetSlot.push(shape);
+  });
+
+  targetSlot.canvasW = canvasW;
+  targetSlot.canvasH = canvasH;
+
+  alert(`Artwork successfully saved to slot ${slotNumber}!`);
+}
+
+function limitCustom(input) {
+  const value = Number(input.value());
+
+  if (Number.isFinite(value) && value > 2000) {
+    input.value('2000');
+  }
+}
+
+function scaleShapes(oldWidth, oldHeight, newWidth, newHeight) {
+  const scaleX = newWidth / oldWidth;
+  const scaleY = newHeight / oldHeight;
+  const strokeScale = Math.sqrt(scaleX * scaleY);
+
+  shapes.forEach(shape => {
+    if (shape.type === 'triangle') {
+      shape.x1 = round(shape.x1 * scaleX);
+      shape.x2 = round(shape.x2 * scaleX);
+      shape.x3 = round(shape.x3 * scaleX);
+      shape.y1 = round(shape.y1 * scaleY);
+      shape.y2 = round(shape.y2 * scaleY);
+      shape.y3 = round(shape.y3 * scaleY);
+    } else if (shape.type === 'line') {
+      shape.x1 = round(shape.x1 * scaleX);
+      shape.x2 = round(shape.x2 * scaleX);
+      shape.y1 = round(shape.y1 * scaleY);
+      shape.y2 = round(shape.y2 * scaleY);
+    } else {
+      shape.x = round(shapeX * scaleX);
+      shape.y = round(shapeY * scaleY);
+      shape.width = round(shape.width * scaleX);
+      shape.height = round(shape.height * scaleY);
+    }
+
+    shape.strokeWeight *= strokeScale;
+  });
+
+  redoStack = [];
+}
+
+function fitCanvas() {
+  const availableWidth = max(1, width - 200);
+
+  viewScale = constrain(
+    min(availableWidth / canvasW, height / canvasH),
+    0.25,
+    30
+  );
+
+  viewX = 200 + (availableWidth - canvasW * viewScale) / 2;
+  viewY = (height - canvasH * viewScale) / 2;
+}
+
+function showCanvasSelection() {
+  youSure = false;
+  canvasReady = false;
+  drawing = false;
+  triangleStep = 0;
+  shapes = [];
+  redoStack = [];
+  canvasW = 0;
+  canvasH = 0;
+  viewScale = 1;
+  viewX = 0;
+  viewY = 0;
+
+  canvasChoices.forEach(button => button.show());
+
+  changeCanvasButton.hide();
+  comfirmChange.hide();
+  noComfirmChange.hide();
+  hideCustomInputs();
+  positionSelect();
+}
+
+function showCustomInputs() {
+  canvasChoices.forEach(button => button.hide());
+  customWInput.show();
+  customHInput.show();
+  customCreateButton.show();
+  backButton.show();
+  positionSelect();
+}
+
+function backToCanvasChoices() {
+  hideCustomInputs();
+  canvasChoices.forEach(button => button.show());
+}
+
+function hideCustomInputs() {
+  customWInput.hide();
+  customHInput.hide();
+  customCreateButton.hide();
+  backButton.hide();
+}
+
+function createCustomCanvas() {
+  const canvasWidth = constrain(parseInt(customWInput.value(), 10) || 1, 1, 2000);
+  const canvasHeight = constrain(parseInt(customHInput.value(), 10) || 1, 1, 2000);
+  chooseCanvas(canvasWidth, canvasHeight);
+}
+
+function makeToolButton(label, x, y, action) {
+  let button = stageElement(createButton(label));
+  button.position(x, y);
+  button.mousePressed(action);
+  return button;
+}
+
+function draw() {
+  if (redactionLoaded) {
+    textFont('Redaction 35');
+  }
+
+  background(100);
+
+  if (canvasReady) {
+    drawingContext.save();
+    drawingContext.beginPath();
+    drawingContext.rect(200, 0, width - 200, height);
+    drawingContext.clip();
+
+    push();
+    translate(viewX, viewY);
+    scale(viewScale);
+
+    noStroke();
+    fill(255);
+    rectMode(CORNER);
+    rect(0, 0, canvasW, canvasH);
+
+    noFill();
+    stroke(85);
+    strokeWeight(1 / viewScale);
+    rect(0, 0, canvasW, canvasH);
+
+    shapes.forEach(drawShape);
+
+    const point = clampToCanvas(getWorldMouse());
+    worldX = point.x;
+    worldY = point.y;
+
+    if (drawing) {
+      applyColor(color);
+      stroke(...strokeColor);
+      strokeWeight(strokeSize);
+
+      if (mode === 1) {
+        const bounds = getRectBounds(point, keyIsDown(16));
+        rectMode(CORNER);
+        rect(bounds.x, bounds.y, bounds.width, bounds.height);
+      } else if (mode === 2) {
+        const bounds = getEllipseBounds(point, keyIsDown(16));
+        ellipseMode(CENTER);
+        ellipse(bounds.x, bounds.y, bounds.width, bounds.height);
+      }
+    }
+
+    if (mode === 3 && triangleStep === 1) {
+      stroke(...strokeColor);
+      strokeWeight(strokeSize);
+      line(startX, startY, point.x, point.y);
+    } else if (mode === 3 && triangleStep === 2) {
+      applyColor(color);
+      stroke(...strokeColor);
+      strokeWeight(strokeSize);
+      triangle(startX, startY, secondX, secondY, point.x, point.y);
+    } else if (mode === 4 && triangleStep === 1 && strokeSize > 0) {
+      noFill();
+      stroke(...strokeColor);
+      strokeWeight(strokeSize);
+      line(startX, startY, point.x, point.y);
+    }
+    pop();
+    drawingContext.restore();
+  }
+
+  drawSidebar();
+  drawMap();
+
+  fill(0);
+  stroke(100, 0, 0);
+  strokeWeight(1);
+  text("mouseX:" + round(worldX), width - 100, height - 30);
+  text("mouseY:" + round(worldY), width - 100, height - 10);
+
+  noStroke();
+  fill(255);
+  text("(coordinates will round\n to nearest integer value)", 10, 40);
+
+  if (youSure) {
+    fill(255, 200, 200);
+    text(
+      "Are you sure you want\n to start new?\n\nYou will lose all your progress\n if you didn't export code!",
+      5,
+      height - 170
+    );
+  }
+}
+
+function drawShape(shape) {
+  applyColor(shape.color);
+  stroke(...(shape.strokeColor || [0, 0, 255]));
+  strokeWeight(shape.strokeWeight);
+
+  if (shape.type === 'line') {
+    line(shape.x1, shape.y1, shape.x2, shape.y2);
+  } else if (shape.type === 'rect') {
+    rectMode(CORNER);
+    rect(shape.x, shape.y, shape.width, shape.height);
+  } else if (shape.type === 'ellipse') {
+    ellipseMode(CENTER);
+    ellipse(shape.x, shape.y, shape.width, shape.height);
+  } else {
+    triangle(shape.x1, shape.y1, shape.x2, shape.y2, shape.x3, shape.y3);
+  }
+}
+
+function drawSidebar() {
+  stroke(255);
+  strokeWeight(3);
+  line(200, 0, 200, height);
+
+  noStroke();
+  fill(0);
+  rectMode(CORNER);
+  rect(0, 0, 200, height);
+
+  fill(255);
+  textSize(14);
+  text('RGB values:', 10, 103);
+  text('Shape: ' + getShape(), 10, 250);
+  text('Color: ' + color.join(','), 10, 280);
+  text('Stroke (0-10):', 10, 302);
+  text('Stroke color:', 10, 360);
+
+  applyColor(color);
+  rect(130, 264, 20, 20);
+
+  stroke(...strokeColor);
+  strokeWeight(max(1, strokeSize));
+  line(10, 335, 90, 335);
+}
+
+function setMode(newMode) {
+  mode = newMode;
+  triangleStep = 0;
+  drawing = false;
+}
+
+function getShape() {
+  return ['Rectangle', 'Ellipse', 'Triangle', 'Line'][mode - 1] || '';
+}
+
+function applyColor(value) {
+  fill(value[0], value[1], value[2]);
+}
+
+function syncRGB() {
+  const hex = colorPicker.value().slice(1);
+  color = [0, 2, 4].map(index => parseInt(hex.slice(index, index + 2), 16));
+  rgbInputs.forEach((input, index) => input.value(color[index]));
+}
+
+function syncStrokeColorFromPicker() {
+  const hex = strokeColorPicker.value().slice(1);
+  strokeColor = [0, 2, 4].map(index => parseInt(hex.slice(index, index + 2), 16));
+}
+
+function applyRGB() {
+  color = rgbInputs.map(input => {
+    const value = parseInt(input.value(), 10);
+    const clamped = constrain(Number.isFinite(value) ? value : 0, 0, 255);
+    input.value(clamped);
+    return clamped;
+  });
+
+  colorPicker.value(
+    '#' + color.map(value => value.toString(16).padStart(2, '0')).join('')
+  );
+}
+
+function applyStroke() {
+  const value = parseInt(strokeInput.value(), 10);
+  if (!Number.isFinite(value)) return;
+
+  strokeSize = constrain(value, 0, 10);
+  strokeInput.value(strokeSize);
+
+  if (strokeSize === 0 && mode === 4) {
+    triangleStep = 0;
+  }
+}
+
+function getWorldMouse() {
+  const point = getProgramMouse();
+
+  return {
+    x: (point.x - viewX) / viewScale,
+    y: (point.y - viewY) / viewScale
+  };
+}
+
+function clampToCanvas(point) {
+  return {
+    x: round(constrain(point.x, 0, canvasW)),
+    y: round(constrain(point.y, 0, canvasH))
+  };
+}
+
+function getRectBounds(point, lockShape = false) {
+  let endX = point.x;
+  let endY = point.y;
+
+  if (lockShape) {
+    const side = max(abs(endX - startX), abs(endY - startY));
+    endX = startX + (endX < startX ? -side : side);
+    endY = startY + (endY < startY ? -side : side);
+  }
+
+  return {
+    x: min(startX, endX),
+    y: min(startY, endY),
+    width: abs(endX - startX),
+    height: abs(endY - startY)
+  };
+}
+
+function getEllipseBounds(point, lockShape = false) {
+  let endX = point.x;
+  let endY = point.y;
+  let shapeWidth = abs(endX - startX);
+  let shapeHeight = abs(endY - startY);
+
+  if (lockShape) {
+    const diameter = max(shapeWidth, shapeHeight);
+    endX = startX + (endX < startX ? -diameter : diameter);
+    endY = startY + (endY < startY ? -diameter : diameter);
+    shapeWidth = diameter;
+    shapeHeight = diameter;
+  }
+
+  return {
+    x: round((startX + endX) / 2),
+    y: round((startY + endY) / 2),
+    width: shapeWidth,
+    height: shapeHeight
+  };
+}
+
+function isShapeInsideCanvas(shape) {
+  let minX, maxX, minY, maxY;
+
+  if (shape.type === 'line') {
+    minX = min(shape.x1, shape.x2);
+    maxX = max(shape.x1, shape.x2);
+    minY = min(shape.y1, shape.y2);
+    maxY = max(shape.y1, shape.y2);
+  } else if (shape.type === 'rect') {
+    minX = min(shape.x, shape.x + shape.width);
+    maxX = max(shape.x, shape.x + shape.width);
+    minY = min(shape.y, shape.y + shape.height);
+    maxY = max(shape.y, shape.y + shape.height);
+  } else if (shape.type === 'ellipse') {
+    minX = shape.x - shape.width / 2;
+    maxX = shape.x + shape.width / 2;
+    minY = shape.y - shape.height / 2;
+    maxY = shape.y + shape.height / 2;
+  } else {
+    minX = min(shape.x1, shape.x2, shape.x3);
+    maxX = max(shape.x1, shape.x2, shape.x3);
+    minY = min(shape.y1, shape.y2, shape.y3);
+    maxY = max(shape.y1, shape.y2, shape.y3);
+  }
+
+  return minX >= 0 && minY >= 0 && maxX <= canvasW && maxY <= canvasH;
+}
+
+function addShape(shape) {
+  if (!isShapeInsideCanvas(shape)) return;
+  shapes.push(shape);
+  redoStack = [];
+}
+
+function formatNumber(value) {
+  return String(Number(Number(value).toFixed(6)));
+}
+
+function shapeCommand(shape) {
+  if (shape.type === 'line') {
+    return `line(${formatNumber(shape.x1)}, ${formatNumber(shape.y1)}, ${formatNumber(shape.x2)}, ${formatNumber(shape.y2)});`;
+  }
+
+  if (shape.type === 'rect') {
+    return `rect(${formatNumber(shape.x)}, ${formatNumber(shape.y)}, ${formatNumber(shape.width)}, ${formatNumber(shape.height)});`;
+  }
+
+  if (shape.type === 'ellipse') {
+    return `ellipse(${formatNumber(shape.x)}, ${formatNumber(shape.y)}, ${formatNumber(shape.width)}, ${formatNumber(shape.height)});`;
+  }
+
+  return `triangle(${formatNumber(shape.x1)}, ${formatNumber(shape.y1)}, ${formatNumber(shape.x2)}, ${formatNumber(shape.y2)}, ${formatNumber(shape.x3)}, ${formatNumber(shape.y3)});`;
+}
+
+function buildExportCode() {
+  const lines = [
+    'function setup() {',
+    `  createCanvas(${canvasW}, ${canvasH});`,
+    '',
+    '  //from here is the drawing code, feel free to move it out of the setup function! :D',
+    '',
+    '  background(255);'
+  ];
+
+  let previousFill = null;
+  let previousStroke = null;
+  let previousWeight = null;
+
+  shapes.forEach(shape => {
+    const fillColor = shape.color.join(',');
+    const stroke = (shape.strokeColor || [0, 0, 255]).join(',');
+    const weight = formatNumber(shape.strokeWeight);
+
+    if (fillColor !== previousFill) lines.push(`  fill(${fillColor});`);
+    if (stroke !== previousStroke) lines.push(`  stroke(${stroke});`);
+    if (weight !== previousWeight) lines.push(`  strokeWeight(${weight});`);
+
+    lines.push(`  ${shapeCommand(shape)}`);
+
+    previousFill = fillColor;
+    previousStroke = stroke;
+    previousWeight = weight;
+  });
+
+  lines.push('}');
+  return lines.join('\n');
+}
+
+function exportCode() {
+  let code = buildExportCode();
+
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(code)
+      .then(() => alert('Export code copied! Paste it into your p5.js sketch.'))
+      .catch(() => copyFallback(code));
+  } else {
+    copyFallback(code);
+  }
+}
+
+function copyFallback(code) {
+  const textarea = document.createElement('textarea');
+  textarea.value = code;
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+
+  const copied = document.execCommand('copy');
+  textarea.remove();
+
+  if (copied) {
+    alert('Export code copied! Paste it into your p5.js sketch.');
+  } else {
+    window.prompt('Copy the export code:', code);
+  }
+}
+
+function undo() {
+  if (!shapes.length) return;
+  redoStack.push(shapes.pop());
+}
+
+function redo() {
+  if (!redoStack.length) return;
+  shapes.push(redoStack.pop());
+}
+
+function mousePressed(event) {
+  if (event?.target && !(event.target instanceof HTMLCanvasElement)) return;
+
+  const programMouse = getProgramMouse();
+
+  if (!canvasReady || programMouse.x < 200) return false;
+
+    const rawPoint = getWorldMouse();
+
+    if (
+      rawPoint.x < 0 || rawPoint.x > canvasW ||
+      rawPoint.y < 0 || rawPoint.y > canvasH
+    ) {
+      return false;
+    }
+
+    const point = clampToCanvas(rawPoint);
+
+  if (mode === 3) {
+    if (triangleStep === 0) {
+      startX = round(point.x);
+      startY = round(point.y);
+      triangleStep = 1;
+    } else if (triangleStep === 1) {
+      secondX = round(point.x);
+      secondY = round(point.y);
+      triangleStep = 2;
+    } else {
+      addShape({
+        type: 'triangle',
+        x1: startX,
+        y1: startY,
+        x2: secondX,
+        y2: secondY,
+        x3: round(point.x),
+        y3: round(point.y),
+        color: [...color],
+        strokeColor: [...strokeColor],
+        strokeWeight: strokeSize
+      });
+
+      triangleStep = 0;
+    }
+
+    return false;
+  }
+
+  if (mode === 4) {
+    if (strokeSize === 0) return false;
+
+    if (triangleStep === 0) {
+      startX = round(point.x);
+      startY = round(point.y);
+      triangleStep = 1;
+    } else {
+      addShape({
+        type: 'line',
+        x1: startX,
+        y1: startY,
+        x2: round(point.x),
+        y2: round(point.y),
+        color: [...color],
+        strokeColor: [...strokeColor],
+        strokeWeight: strokeSize
+      });
+
+      triangleStep = 0;
+    }
+
+    return false;
+  }
+
+  startX = point.x;
+  startY = point.y;
+  drawing = true;
+
+  return false;
+}
+
+function mouseReleased() {
+  if (!drawing || !canvasReady) return false;
+
+  const point = clampToCanvas(getWorldMouse());
+  const lockShape = keyIsDown(16);
+
+  if (mode === 1) {
+    const bounds = getRectBounds(point, lockShape);
+
+    addShape({
+      type: 'rect',
+      x: round(bounds.x),
+      y: round(bounds.y),
+      width: round(bounds.width),
+      height: round(bounds.height),
+      color: [...color],
+      strokeColor: [...strokeColor],
+      strokeWeight: strokeSize
+    });
+  } else if (mode === 2) {
+    const bounds = getEllipseBounds(point, lockShape);
+
+    addShape({
+      type: 'ellipse',
+      x: round(bounds.x),
+      y: round(bounds.y),
+      width: round(bounds.width),
+      height: round(bounds.height),
+      color: [...color],
+      strokeColor: [...strokeColor],
+      strokeWeight: strokeSize
+    });
+  }
+
+  drawing = false;
+  return false;
+}
+
+function mouseWheel(event) {
+  const pointer = getProgramMouse();
+
+  if (!canvasReady || pointer.x < 200) return false;
+
+  const cursorCanvasX = (pointer.x - viewX) / viewScale;
+  const cursorCanvasY = (pointer.y - viewY) / viewScale;
+
+  viewScale = constrain(viewScale * exp(-event.delta * 0.001), 0.25, 30);
+  viewX = pointer.x - cursorCanvasX * viewScale;
+  viewY = pointer.y - cursorCanvasY * viewScale;
+
+  const areaWidth = width - 200;
+  const scaledWidth = canvasW * viewScale;
+  const scaledHeight = canvasH * viewScale;
+
+  viewX = scaledWidth <= areaWidth
+    ? 200 + (areaWidth - scaledWidth) / 2
+    : constrain(viewX, 200 + areaWidth - scaledWidth, 200);
+
+  viewY = scaledHeight <= height
+    ? (height - scaledHeight) / 2
+    : constrain(viewY, height - scaledHeight, 0);
+
+  return false;
+}
+
+function windowResized() {
+  updateProgramScale();
+
+  if (canvasReady) {
+    fitCanvas();
+  } else {
+    positionSelect();
+  }
+}
+
+function drawMap(){
+  if(!canvasReady)return;
+
+  let mapScale = 100 / max(canvasW, canvasH);
+
+  push();
+  rectMode(CORNER);
+
+  fill(255);
+  noStroke();
+  rect(
+    width - canvasW * mapScale - 10,
+    height - canvasH * mapScale - 55,
+    canvasW * mapScale,
+    canvasH * mapScale
+  );
+
+  push();
+  drawingContext.save();
+  drawingContext.beginPath();
+  drawingContext.rect(
+    width - canvasW * mapScale - 10,
+    height - canvasH * mapScale - 55,
+    canvasW * mapScale,
+    canvasH * mapScale
+  );
+  drawingContext.clip();
+
+  translate(
+    width - canvasW * mapScale - 10,
+    height - canvasH * mapScale - 55
+  );
+
+  scale(mapScale);
+
+  shapes.forEach(drawShape);
+  drawingContext.restore();
+  pop();
+
+  fill(0, 100, 255, 80);
+  stroke(0, 40, 80, 200);
+  strokeWeight(3);
+
+  rect(
+    width - canvasW * mapScale - 10 +
+    constrain((200 - viewX) / viewScale, 0, canvasW) * mapScale,
+
+    height - canvasH * mapScale - 55 +
+    constrain(-viewY / viewScale, 0, canvasH) * mapScale,
+
+    (constrain((width - viewX) / viewScale, 0, canvasW) - constrain((200 - viewX) / viewScale, 0, canvasW)) * mapScale,
+
+    (constrain((height - viewY) / viewScale, 0, canvasH) -
+    constrain(-viewY / viewScale, 0, canvasH)) * mapScale
+  );
+
+  noFill();
+  stroke(20);
+  strokeWeight(3);
+
+  rect(
+    width - canvasW * mapScale - 10,
+    height - canvasH * mapScale - 55,
+    canvasW * mapScale,
+    canvasH * mapScale
+  );
+
+  pop();
+}
+</script>
+</body>
+</html>
